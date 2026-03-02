@@ -1,30 +1,81 @@
-#!/usr/bin.env groovy
+#!/usr/bin/env groovy
 
-pipeline {   
+library(
+     identifier: 'Jenkins-Shared-Library-Master@master',
+     retriever: modernSCM([
+          $class: 'GitSCMSource',
+         remote: 'https://github.com/OkomaNdu/Jenkins-Shared-Library-Master.git',
+         credentialsId: 'GitHub-Credentials'
+    ])
+)
+pipeline {
     agent any
+    tools {
+        maven 'maven-3.9'
+    }
     stages {
-        stage("test") {
+
+        stage('increment version') {
             steps {
                 script {
-                    echo "Testing the application..."
-
+                    echo 'incrementing app version....'
+                    sh '''
+                         mvn build-helper:parse-version \
+                         versions:set -DnewVersion=\\${parsedVersion.majorVersion}.\\${parsedVersion.minorVersion}.\\${parsedVersion.nextIncrementalVersion} \
+                         versions:commit
+                       '''
+                    def matcher = readFile('pom.xml') =~ '<version>(.+)</version>'
+                    def version = matcher[0][1]
+                    env.IMAGE_NAME = "ndubuisip/demo-app:${version}-${BUILD_NUMBER}"
                 }
             }
         }
-        stage("build") {
+        stage('build app') {
+            steps {
+              echo 'building application jar...'
+              buildJar()
+            }
+        }
+        stage('build image') {
             steps {
                 script {
-                    echo "Building the application..."
+                    echo 'building the docker image...'
+                    buildImage(env.IMAGE_NAME)
+                    dockerLogin()
+                    dockerPush(env.IMAGE_NAME)
                 }
             }
         }
-
         stage("deploy") {
             steps {
                 script {
-                    echo "Deploying the application..."
+                    echo 'deploying docker image to EC2...'
+
+                    def shellCmd = "bash ./server-cmds.sh ${env.IMAGE_NAME}"
+                    def ec2Instance = "ec2-user@35.182.253.151"
+                    sshagent(['ec2-docker-keyserver']) {
+                        sh "scp server-cmds.sh ${ec2Instance}:/home/ec2-user"
+                        sh "scp docker-compose.yaml ${ec2Instance}:/home/ec2-user"
+                        sh "ssh -o StrictHostKeyChecking=no ${ec2Instance} ${shellCmd}"
+                    }
                 }
             }
-        }               
+        }
+        stage('commit version update'){
+            steps {
+                script {
+                     withCredentials([usernamePassword(credentialsId: 'GitHub-Credentials', passwordVariable: 'PASS', usernameVariable: 'USER')]){
+                        sh 'git config user.email "ndu2okoma@gmail.com"'
+                        sh 'git config user.name "OkomaNdu"'
+
+                        sh 'git remote set-url origin https://$USER:$PASS@github.com/OkomaNdu/Java-Maven-App-Multi-Branch.git'
+
+                        sh 'git add .'
+                        sh 'git commit -m "ci: version bump"'
+                        sh 'git push origin HEAD:jenkins-jobs'
+                    }
+                }
+            }
+        }
     }
-} 
+}
