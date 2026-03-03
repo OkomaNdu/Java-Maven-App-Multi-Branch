@@ -1,30 +1,31 @@
-#!/usr/bin.env groovy
+#!/usr/bin/env groovy
 
-pipeline {   
+pipeline {
     agent any
     stages {
-        stage("test") {
+        stage('build app') {
+            steps {
+               script {
+                   echo "building the application..."
+               }
+            }
+        }
+        stage('build image') {
             steps {
                 script {
-                    echo "Testing the application..."
-
+                    echo "building the docker image..."
                 }
             }
         }
-        stage("build") {
+        stage('deploy') {
             steps {
                 script {
-                    echo "Building the application..."
+                   echo 'deploying docker image...'
+                   withKubeConfig([credentialsId: 'lke-credentials', serverUrl: 'https://df1c75c9-7e26-4147-b60c-73a32c24cd6f.ca-central-1-gw.linodelke.net']) {
+                        sh 'kubectl create deployment nginx-deployment --image=nginx'
+                   }
                 }
             }
         }
-
-        stage("deploy") {
-            steps {
-                script {
-                    echo "Deploying the application..."
-                }
-            }
-        }               
     }
-} 
+}
